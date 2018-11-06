@@ -5,63 +5,63 @@
  * Реализованы методы several и through
  */
 const isStar = true;
+function getNamespace() {
+    let mainNamespace = [];
 
-function getOrCreateActionsByName(mainNamespace, actionName) {
-    const action = mainNamespace.find(({ name }) => name === actionName);
+    return {
+        getOrCreateActionsByName: function (actionName) {
+            let action = mainNamespace.find(({ name }) => name === actionName);
+            if (action) {
+                return action;
+            }
+            action = { name: actionName, actions: [] };
+            mainNamespace.push(action);
 
-    if (action) {
-        return action;
-    }
+            return action;
+        },
 
-    mainNamespace.push({ name: actionName, actions: [] });
+        getOrCreateUpActionsObjects: function (name) {
+            const nameParts = name.split('.');
 
-    return mainNamespace[mainNamespace.length - 1];
+            return nameParts.reduce((acc, val, ind) => {
+                let curName = nameParts.slice(0, ind + 1).join('.');
+                acc.push(this.getOrCreateActionsByName(curName));
+
+                return acc;
+            }, []);
+        },
+
+        getOrCreateDownActionsObjects: function (name) {
+            return mainNamespace.filter(curObject =>
+                curObject.name.startsWith(name + '.') || curObject.name === name);
+        },
+
+        getOrCreateActions: function (name) {
+            return this.getOrCreateUpActionsObjects(name)
+                .sort((first, second) => second.name.length - first.name.length)
+                .reduce((acc, val) => acc.concat(val.actions), []);
+        },
+
+        setFunction: function (namespace, context, handler) {
+            const funcObject = { context, handler };
+            this.getOrCreateActionsByName(namespace).actions.push(funcObject);
+        },
+
+        unsetFunction: function (namespace, context) {
+            for (let emit of this.getOrCreateDownActionsObjects(namespace)) {
+                emit.actions = emit.actions.filter(action => action.context !== context);
+            }
+        }
+    };
 }
 
-function getOrCreateUpActionsObjects(mainNamespace, name) {
-    const splitName = name.split('.');
-
-    return splitName.reduce((acc, val, ind) => {
-        let curName = splitName.slice(0, ind + 1).join('.');
-        acc.push(getOrCreateActionsByName(mainNamespace, curName));
-
-        return acc;
-    }, []);
-}
-
-function getOrCreateDownActionsObjects(mainNamespace, name) {
-    return mainNamespace.filter(curObject => {
-        return curObject.name.startsWith(name + '.') || curObject.name === name;
-    });
-}
-
-function getOrCreateActions(mainNamespace, name) {
-    return getOrCreateUpActionsObjects(mainNamespace, name)
-        .sort((first, second) => second.name.length - first.name.length)
-        .reduce((acc, val) => {
-            acc.push(...val.actions);
-
-            return acc;
-        }, []);
-}
-
-function setFunction(emitObject, namespace, context, handler) {
-    const funcObject = { context: context, handler: handler };
-    getOrCreateActionsByName(emitObject, namespace).actions.push(funcObject);
-}
-
-function unsetFunction(emitObject, namespace, context) {
-    for (let emit of getOrCreateDownActionsObjects(emitObject, namespace)) {
-        emit.actions = emit.actions.filter(action => action.context !== context);
-    }
-}
 
 /**
  * Возвращает новый emitter
  * @returns {Object}
  */
 function getEmitter() {
-    const mainNamespace = [];
+    const namespace = getNamespace();
 
     return {
 
@@ -73,7 +73,7 @@ function getEmitter() {
          * @returns {Object} emitter
          */
         on: function (event, context, handler) {
-            setFunction(mainNamespace, event, context, handler);
+            namespace.setFunction(event, context, handler);
 
             return this;
         },
@@ -85,7 +85,7 @@ function getEmitter() {
          * @returns {Object} emitter
          */
         off: function (event, context) {
-            unsetFunction(mainNamespace, event, context);
+            namespace.unsetFunction(event, context);
 
             return this;
         },
@@ -96,7 +96,7 @@ function getEmitter() {
          * @returns {Object} emitter
          */
         emit: function (event) {
-            getOrCreateActions(mainNamespace, event)
+            namespace.getOrCreateActions(event)
                 .forEach(func => func.handler.call(func.context));
 
             return this;
@@ -113,16 +113,13 @@ function getEmitter() {
          */
         several: function (event, context, handler, times) {
             let count = 0;
-            let newHandler = () => {
+            let handlerWrapper = (times > 0) ? () => {
                 if (count < times) {
                     handler.call(context);
                 }
                 count++;
-            };
-            if (times <= 0) {
-                newHandler = handler;
-            }
-            this.on(event, context, newHandler);
+            } : handler;
+            this.on(event, context, handlerWrapper);
 
             return this;
         },
@@ -138,16 +135,13 @@ function getEmitter() {
          */
         through: function (event, context, handler, frequency) {
             let count = 0;
-            let newHandler = () => {
+            let handlerWrapper = (frequency > 0) ? () => {
                 if (count === 0) {
                     handler.call(context);
                 }
                 count = (count + 1) % frequency;
-            };
-            if (frequency <= 0) {
-                newHandler = handler;
-            }
-            this.on(event, context, newHandler);
+            } : handler;
+            this.on(event, context, handlerWrapper);
 
             return this;
         }
